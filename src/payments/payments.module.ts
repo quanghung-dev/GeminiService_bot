@@ -12,7 +12,11 @@ import { VietqrWebhookService } from './vietqr/vietqr-webhook.service.js';
 import { VietqrController } from './vietqr/vietqr.controller.js';
 
 @Module({
-  imports: [ConfigModule.forFeature(vietqrConfig), PrismaModule, NotificationsModule],
+  imports: [
+    ConfigModule.forFeature(vietqrConfig),
+    PrismaModule,
+    NotificationsModule,
+  ],
   controllers: [VietqrController],
   providers: [
     VietqrTokenService,

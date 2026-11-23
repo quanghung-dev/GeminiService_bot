@@ -36,7 +36,7 @@ sequenceDiagram
     participant Outbox as TelegramOutboxWorker
     actor Admin as Admin
 
-    User->>Bot: Chọn sản phẩm & gói (+ nhập email nếu requires_email)
+    User->>Bot: Chọn sản phẩm & gói (+ nhập thông tin theo handle_type/handle_config)
     Bot->>DB: TX: UPDATE plans (stock - 1 WHERE stock > 0) + INSERT orders (PENDING, expires +30m)
     Bot->>VQR: POST /vqr/api/token_generate (Basic SYSTEM creds)
     VQR-->>Bot: 200 OK { access_token, token_type: Bearer, expires_in }
@@ -224,6 +224,8 @@ Xem template chuẩn trong [.env.example](file:///d:/GeminiService_bot/.env.exam
 | `VIETQR_ACCOUNT_NAME` | Có để tạo QR | Tên chủ tài khoản (VIET HOA KHONG DAU) |
 | `VIETQR_TERMINAL_CODE` | Tùy chọn | Bắt buộc nếu dùng `qrType = 1` hoặc `3` |
 | `ORDER_EXPIRES_MINUTES` | Không (mặc định `30`) | Thời hạn thanh toán đơn hàng (phút) |
+| `SUPPORT_TELEGRAM` | Không | Handle/link Telegram hiển thị trong menu Hỗ trợ (ẩn nếu bỏ trống) |
+| `SUPPORT_ZALO` | Không | SĐT/link Zalo hiển thị trong menu Hỗ trợ (ẩn nếu bỏ trống) |
 
 ---
 
@@ -282,6 +284,7 @@ curl --location --request POST "https://dev.vietqr.org/vqr/bank/api/test/transac
    npm run build
    npm run start:prod
    ```
+   > **Lưu ý khi bootstrap một PostgreSQL trống hoàn toàn:** Thư mục `prisma/migrations` hiện chứa các migration bổ sung trên schema đã có sẵn của Neon DB (chưa có migration `init` tạo các bảng gốc như `users`, `products`, `plans`, `orders`, `payments`, `subscriptions`, `support_tickets`). Nếu dựng mới trên một database trống, cần đồng bộ schema trước bằng `npx prisma db push` (kèm các `CHECK` constraint ghi chú trong [schema.prisma](file:///d:/GeminiService_bot/prisma/schema.prisma)) rồi đánh dấu các migration hiện tại bằng `npx prisma migrate resolve --applied <migration_name>`.
 4. Bảo vệ `/admin/*`: `AdminGuard` chỉ cho phép kết nối từ loopback (`127.0.0.1` / `::1`) kèm Basic Auth; **không** expose `/admin/*` ra internet công khai trên Nginx/Caddy.
 5. Đảm bảo tường lửa không chặn dải IP outbound của VietQR khi VietQR gọi `/vqr/api/token_generate` và `/vqr/bank/api/transaction-sync`.
 
@@ -302,7 +305,7 @@ Nhập chính xác các giá trị tương ứng từ cấu hình thực tế c�
 | Get Token URL | `https://<YOUR_PUBLIC_DOMAIN>/vqr/api/token_generate` |
 | Callback URL | `https://<YOUR_PUBLIC_DOMAIN>/vqr/bank/api/transaction-sync` |
 
-> **Lưu ý về cấu hình `plans.requires_email`:** Với các gói sản phẩm cần thu thập email khách hàng trước khi tạo đơn, Admin cập nhật `UPDATE public.plans SET requires_email = TRUE WHERE code IN (...);`.
+> **Lưu ý về cấu hình `plans.handle_type` & `plans.handle_config`:** Cột `requires_email` trước đây đã được thay thế bằng `handle_type` (`LINK`, `CUSTOMER_ACCOUNT`, `PROVIDED_ACCOUNT`, `OTHER`) và JSON `handle_config` (`fields`, `instructionVi`, `instructionEn`) để cấu hình thông tin khách hàng cần nhập trước khi tạo đơn QR.
 
 ---
 

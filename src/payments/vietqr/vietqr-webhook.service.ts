@@ -152,7 +152,11 @@ export function parseVietqrTransactionSyncPayload(raw: unknown): ParsedVietqrTra
   const transactionId = requireNonEmptyString(body.transactionid, 'transactionid');
   const transactionAt = parseTransactionTimeMs(body.transactiontime);
   const referenceNumber = requireNonEmptyString(body.referencenumber, 'referencenumber');
-  const orderId = requireNonEmptyString(body.orderId, 'orderId');
+  // orderId may be empty/null on manual transfers or debit movements; reconciliation falls back to content.
+  const orderId =
+    typeof body.orderId === 'string' && body.orderId.trim().length > 0
+      ? body.orderId.trim()
+      : '';
 
   // Optional `sign` field per official public docs: do NOT invent a verification algorithm.
   const hasOptionalSign = typeof body.sign === 'string' && body.sign.trim().length > 0;
@@ -202,7 +206,7 @@ export class VietqrWebhookService {
         currency: 'VND',
         transType: parsed.transType,
         content: parsed.content,
-        orderCodeHint: parsed.orderId,
+        orderCodeHint: parsed.orderId || null,
         transactionAt: parsed.transactionAt,
         receivedAt,
         rawPayload: rawBody,

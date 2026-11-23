@@ -22,6 +22,8 @@ model User {
   firstName       String          @map("first_name") @db.VarChar(255)
   lastName        String?         @map("last_name") @db.VarChar(255)
   languageCode    LanguageCode?   @map("language_code")
+  walletVnd       BigInt          @default(0) @map("wallet_vnd")
+  walletUsdt      Decimal         @default(0) @map("wallet_usdt") @db.Decimal(24, 6)
   role            UserRole        @default(USER)
   createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
@@ -66,10 +68,11 @@ model Plan {
   sortOrder     Int      @default(0) @map("sort_order")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
-  stockQuantity Int      @default(0) @map("stock_quantity")
-  requiresEmail Boolean  @default(false) @map("requires_email")
+  stockQuantity Int            @default(0) @map("stock_quantity")
+  handleType    PlanHandleType @default(OTHER) @map("handle_type")
+  handleConfig  Json           @default("{}") @map("handle_config")
   orders        Order[]
-  product       Product  @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product       Product        @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("plans")
 }
@@ -80,6 +83,7 @@ model Order {
   userId                String                 @map("user_id") @db.Uuid
   planId                String                 @map("plan_id") @db.Uuid
   targetEmail           String?                @map("target_email") @db.VarChar(255)
+  handleType            PlanHandleType         @default(OTHER) @map("handle_type")
   totalAmount           BigInt                 @map("total_amount")
   currency              String                 @default("VND") @db.VarChar(3)
   status                OrderStatus            @default(PENDING)
@@ -101,6 +105,7 @@ model Order {
   stockReleasedAt       DateTime?              @map("stock_released_at") @db.Timestamptz(6)
   plan                  Plan                   @relation(fields: [planId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   user                  User                   @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fulfillment           OrderFulfillment?
   payments              Payment[]
   subscription          Subscription?
   supportTickets        SupportTicket[]
@@ -141,16 +146,30 @@ model Payment {
   @@map("payments")
 }
 
+model OrderFulfillment {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId       String         @unique @map("order_id") @db.Uuid
+  handleType    PlanHandleType @map("handle_type")
+  customerInput Json?          @map("customer_input")
+  deliveryData  Json?          @map("delivery_data")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("order_fulfillments")
+}
+
 model Subscription {
-  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  orderId     String             @unique @map("order_id") @db.Uuid
-  targetEmail String             @map("target_email") @db.VarChar(255)
-  status      SubscriptionStatus @default(ACTIVE)
-  activatedAt DateTime           @map("activated_at") @db.Timestamptz(6)
-  expiresAt   DateTime           @map("expires_at") @db.Timestamptz(6)
-  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime           @default(now()) @map("updated_at") @db.Timestamptz(6)
-  order       Order              @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId           String             @unique @map("order_id") @db.Uuid
+  targetEmail       String?            @map("target_email") @db.VarChar(255)
+  accountIdentifier String?            @map("account_identifier") @db.VarChar(255)
+  status            SubscriptionStatus @default(ACTIVE)
+  activatedAt       DateTime           @map("activated_at") @db.Timestamptz(6)
+  expiresAt         DateTime           @map("expires_at") @db.Timestamptz(6)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime           @default(now()) @map("updated_at") @db.Timestamptz(6)
+  order             Order              @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([expiresAt], map: "subscriptions_expires_at_idx", where: raw("(status = 'ACTIVE'::subscription_status)"))
   @@map("subscriptions")
@@ -245,6 +264,15 @@ enum PaymentStatus {
   REJECTED
 
   @@map("payment_status")
+}
+
+enum PlanHandleType {
+  LINK
+  CUSTOMER_ACCOUNT
+  PROVIDED_ACCOUNT
+  OTHER
+
+  @@map("plan_handle_type")
 }
 
 enum SubscriptionStatus {

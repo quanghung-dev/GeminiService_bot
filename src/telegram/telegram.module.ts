@@ -7,7 +7,13 @@ import { UsersModule } from '../users/users.module.js';
 import { TelegramService } from './telegram.service.js';
 
 @Module({
-  imports: [ProductsModule, UsersModule, OrdersModule, PaymentsModule, NotificationsModule],
+  imports: [
+    ProductsModule,
+    UsersModule,
+    OrdersModule,
+    PaymentsModule,
+    NotificationsModule,
+  ],
   providers: [TelegramService],
 })
 export class TelegramModule {}

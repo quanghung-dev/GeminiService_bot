@@ -1,4 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import type { PlanHandleType } from '../generated/prisma/client.js';
+import {
+  parsePlanHandleConfig,
+  type PlanHandleConfig,
+} from '../orders/handle-type.types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 export interface CatalogProduct {
@@ -20,7 +25,8 @@ export interface CatalogPlan {
   durationDays: number;
   warrantyDays: number;
   stockQuantity: number;
-  requiresEmail: boolean;
+  handleType: PlanHandleType;
+  handleConfig: PlanHandleConfig;
 }
 
 export interface CatalogProductDetails extends CatalogProduct {
@@ -69,7 +75,8 @@ export class ProductsService {
             durationDays: true,
             warrantyDays: true,
             stockQuantity: true,
-            requiresEmail: true,
+            handleType: true,
+            handleConfig: true,
           },
         },
       },
@@ -85,8 +92,17 @@ export class ProductsService {
       descriptionVi: product.descriptionVi,
       descriptionEn: product.descriptionEn,
       plans: product.plans.map((plan) => ({
-        ...plan,
+        id: plan.id,
+        code: plan.code,
+        nameVi: plan.nameVi,
+        nameEn: plan.nameEn,
         price: plan.price.toString(),
+        currency: plan.currency,
+        durationDays: plan.durationDays,
+        warrantyDays: plan.warrantyDays,
+        stockQuantity: plan.stockQuantity,
+        handleType: plan.handleType,
+        handleConfig: parsePlanHandleConfig(plan.handleConfig),
       })),
     };
   }

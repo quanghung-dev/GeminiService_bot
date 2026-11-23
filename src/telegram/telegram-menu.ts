@@ -1,3 +1,60 @@
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+export function buildSupportMessage(
+  code: 'vi' | 'en',
+  envSource: NodeJS.ProcessEnv = process.env,
+): string {
+  const telegramContact = envSource.SUPPORT_TELEGRAM?.trim();
+  const zaloContact = envSource.SUPPORT_ZALO?.trim();
+  const contactLines = [
+    telegramContact ? `✉️ <b>Telegram:</b> ${escapeHtml(telegramContact)}` : null,
+    zaloContact ? `📞 <b>Zalo:</b> ${escapeHtml(zaloContact)}` : null,
+  ].filter((line): line is string => line !== null);
+
+  if (code === 'en') {
+    return [
+      '💬 <b>CUSTOMER SUPPORT</b>',
+      '───────────────',
+      ...(contactLines.length > 0 ? ['', '💡 <b>Contact support:</b>', ...contactLines] : []),
+      '',
+      '⏰ <b>Support hours:</b>',
+      '└ 8:00 - 23:00 daily',
+      '',
+      '✍️ <b>Please note:</b>',
+      '├ Include your order/transaction code when requesting support',
+      '├ Describe the issue clearly',
+      '└ Allow 5-10 minutes for a response',
+      '',
+      '───────────────',
+      '🫶 Thank you for trusting our shop!',
+    ].join('\n');
+  }
+
+  return [
+    '💬 <b>HỖ TRỢ KHÁCH HÀNG</b>',
+    '───────────────',
+    ...(contactLines.length > 0 ? ['', '💡 <b>Liên hệ hỗ trợ:</b>', ...contactLines] : []),
+    '',
+    '⏰ <b>Thời gian hỗ trợ:</b>',
+    '└ 8:00 - 23:00 hàng ngày',
+    '',
+    '✍️ <b>Lưu ý:</b>',
+    '├ Gửi mã đơn / mã giao dịch khi cần hỗ trợ',
+    '├ Mô tả rõ vấn đề gặp phải',
+    '└ Chờ phản hồi trong 5-10 phút',
+    '',
+    '───────────────',
+    '🫶 Cảm ơn bạn đã tin tưởng shop!',
+  ].join('\n');
+}
+
 export const languages = [
   {
     code: 'vi',

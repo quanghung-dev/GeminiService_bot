@@ -8,17 +8,31 @@ import { ProductsService } from '../products/products.service.js';
 import { UsersService } from '../users/users.service.js';
 import {
   type CatalogDependencies,
-  handlePendingEmailText,
-  type PendingEmailCheckout,
+  handlePendingCheckoutText,
+  type PendingCheckoutState,
   registerCatalog,
   showCatalogText,
 } from './telegram-catalog.js';
-import { languages, menuRows } from './telegram-menu.js';
+import { buildSupportMessage, languages, menuRows } from './telegram-menu.js';
+import { buildProfileMessage } from './telegram-profile.js';
+import { registerWarranty } from './telegram-warranty.js';
+
+const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+
+export function truncateTelegramMessage(
+  text: string,
+  maxLength = TELEGRAM_MAX_MESSAGE_LENGTH,
+): string {
+  if (text.length <= maxLength) return text;
+  if (maxLength <= 3) return text.slice(0, Math.max(0, maxLength));
+  return `${text.slice(0, maxLength - 3)}...`;
+}
 
 @Injectable()
 export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(TelegramService.name);
-  private readonly pendingEmailCheckouts = new Map<number, PendingEmailCheckout>();
+  private readonly pendingCheckoutInputs = new Map<number, PendingCheckoutState>();
+  private readonly inFlightCheckouts = new Set<number>();
   private bot?: Telegraf;
 
   constructor(
@@ -40,7 +54,8 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
       usersService: this.usersService,
       ordersService: this.ordersService,
       vietqrApiClient: this.vietqrApiClient,
-      pendingEmailCheckouts: this.pendingEmailCheckouts,
+      pendingCheckoutInputs: this.pendingCheckoutInputs,
+      inFlightCheckouts: this.inFlightCheckouts,
     };
 
     const languagePrompt = '🌐 Chọn ngôn ngữ / Choose language:';
@@ -51,10 +66,17 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
 
     bot.start(async (context) => {
       if (context.from) {
-        this.pendingEmailCheckouts.delete(context.from.id);
+        this.pendingCheckoutInputs.delete(context.from.id);
         await this.usersService.upsertTelegramUser(context.from).catch(() => undefined);
       }
       await context.reply(languagePrompt, languageKeyboard);
+    });
+
+    bot.action(/^(?:language|menu):(?:vi|en)(?::|$)/, async (context, next) => {
+      if (context.from) {
+        this.pendingCheckoutInputs.delete(context.from.id);
+      }
+      await next();
     });
 
     for (const { code, welcome, guide, prompt, unavailable } of languages) {
@@ -66,6 +88,9 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
       const mainMenuText = `${guide}\n\n${prompt}`;
 
       registerCatalog(bot, code, catalogDeps, async (context) => {
+        await showCatalogText(context, mainMenuText, menuKeyboard);
+      });
+      registerWarranty(bot, code, unavailable, async (context) => {
         await showCatalogText(context, mainMenuText, menuKeyboard);
       });
 
@@ -85,6 +110,22 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
         await context.answerCbQuery();
         await context.reply(guide);
       });
+      bot.action(`menu:${code}:profile`, async (context) => {
+        if (context.chat?.type !== 'private') {
+          await context.answerCbQuery(
+            code === 'vi' ? 'Vui lòng mở Hồ sơ trong chat riêng với bot.' : 'Open Profile in a private chat with the bot.',
+          );
+          return;
+        }
+
+        await context.answerCbQuery();
+        const user = await this.usersService.upsertTelegramUser(context.from);
+        await context.reply(buildProfileMessage(user, code));
+      });
+      bot.action(`menu:${code}:support`, async (context) => {
+        await context.answerCbQuery();
+        await context.reply(buildSupportMessage(code), { parse_mode: 'HTML' });
+      });
       bot.action(new RegExp(`^menu:${code}:`), async (context) => {
         await context.answerCbQuery(unavailable);
       });
@@ -93,7 +134,7 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
     bot.on('text', async (context, next) => {
       const text = context.message.text;
       if (!text.startsWith('/')) {
-        const handled = await handlePendingEmailText(context, catalogDeps, text);
+        const handled = await handlePendingCheckoutText(context, catalogDeps, text);
         if (handled) return;
       }
       await next();
@@ -127,7 +168,8 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
 
   onModuleDestroy(): void {
     this.outboxService.registerSender(null);
-    this.pendingEmailCheckouts.clear();
+    this.pendingCheckoutInputs.clear();
+    this.inFlightCheckouts.clear();
     try {
       this.bot?.stop('NestJS shutdown');
     } catch (error) {
@@ -141,7 +183,7 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
     text: string,
   ): Promise<TelegramSendResult> {
     try {
-      await bot.telegram.sendMessage(chatId.toString(), text);
+      await bot.telegram.sendMessage(chatId.toString(), truncateTelegramMessage(text));
       return { ok: true };
     } catch (error: unknown) {
       if (error instanceof TelegramError) {

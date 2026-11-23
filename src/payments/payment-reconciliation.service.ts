@@ -9,6 +9,10 @@ import {
   TelegramOutboxService,
 } from '../notifications/telegram-outbox.service.js';
 import { extractOrderCodeFromContent } from '../orders/order-code.js';
+import {
+  formatHandleTypeLabel,
+  parseCustomerOrderInput,
+} from '../orders/handle-type.types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type {
   IncomingBankTransaction,
@@ -367,8 +371,13 @@ export class PaymentReconciliationService {
           include: {
             user: true,
             plan: { include: { product: true } },
+            fulfillment: true,
           },
         });
+
+        const customerInput = parseCustomerOrderInput(orderDetails.fulfillment?.customerInput);
+        const customerAccountDisplay =
+          customerInput?.usernameOrEmail || orderDetails.targetEmail || null;
 
         const isEnglish = orderDetails.user.languageCode === 'en';
         const planName = isEnglish ? orderDetails.plan.nameEn : orderDetails.plan.nameVi;
@@ -379,7 +388,7 @@ export class PaymentReconciliationService {
               `✅ Payment confirmed for order ${orderDetails.orderCode}!`,
               `Product: ${orderDetails.plan.product.name} - ${planName}`,
               `Amount: ${formattedAmount}`,
-              orderDetails.targetEmail ? `Email: ${orderDetails.targetEmail}` : null,
+              customerAccountDisplay ? `Account/Email: ${customerAccountDisplay}` : null,
               'Your order has been forwarded to Admin for activation/delivery.',
             ]
               .filter(Boolean)
@@ -388,7 +397,7 @@ export class PaymentReconciliationService {
               `✅ Thanh toán thành công cho đơn hàng ${orderDetails.orderCode}!`,
               `Sản phẩm: ${orderDetails.plan.product.name} - ${planName}`,
               `Số tiền: ${formattedAmount}`,
-              orderDetails.targetEmail ? `Email kích hoạt: ${orderDetails.targetEmail}` : null,
+              customerAccountDisplay ? `Tài khoản/Email: ${customerAccountDisplay}` : null,
               'Đơn hàng đã được chuyển cho Admin để tiếp nhận và kích hoạt cho bạn.',
             ]
               .filter(Boolean)
@@ -407,12 +416,14 @@ export class PaymentReconciliationService {
           const customerHandle = orderDetails.user.username
             ? `@${orderDetails.user.username}`
             : `${orderDetails.user.firstName} (${orderDetails.user.telegramId.toString()})`;
+          const handleLabel = formatHandleTypeLabel(orderDetails.handleType, 'vi');
           const adminText = [
             `💰 Đơn hàng mới đã thanh toán: ${orderDetails.orderCode}`,
             `Khách hàng: ${customerHandle}`,
             `Sản phẩm: ${orderDetails.plan.product.name} - ${orderDetails.plan.nameVi}`,
+            `Loại xử lý: ${handleLabel} (${orderDetails.handleType})`,
             `Số tiền: ${formattedAmount}`,
-            orderDetails.targetEmail ? `Email kích hoạt: ${orderDetails.targetEmail}` : null,
+            customerAccountDisplay ? `Tài khoản/Email khách: ${customerAccountDisplay}` : null,
             `Mã GD ngân hàng: ${input.referenceCode ?? input.providerTransactionId}`,
             `Thời gian GD: ${input.transactionAt.toISOString()}`,
             `Trạng thái: PAID (chờ Admin chuyển PROCESSING -> COMPLETED)`,

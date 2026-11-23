@@ -62,6 +62,22 @@ describe('VietQR Transaction Sync Payload Parser', () => {
     assert.equal(parsed.bankAccount, '0123456789');
   });
 
+  it('allows empty or missing orderId so reconciliation can fall back to transfer content', () => {
+    const parsed = parseVietqrTransactionSyncPayload({
+      bankaccount: '0123456789',
+      amount: 100000,
+      transType: 'C',
+      content: 'CHUYEN KHOAN GS1234567890',
+      transactionid: 'tx-uuid-no-order-id',
+      transactiontime: 1757342061000,
+      referencenumber: 'FT26008507756021',
+      orderId: '',
+    });
+
+    assert.equal(parsed.orderId, '');
+    assert.equal(parsed.content, 'CHUYEN KHOAN GS1234567890');
+  });
+
   it('rejects floating-point, zero, or negative amounts', () => {
     assert.throws(() => parseStrictPositiveBigInt(100.5, 'amount'));
     assert.throws(() => parseStrictPositiveBigInt('100.50', 'amount'));
