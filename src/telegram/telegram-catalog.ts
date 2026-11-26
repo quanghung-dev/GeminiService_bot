@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Markup, TelegramError, type Context, type Telegraf } from 'telegraf';
-import { bold, code as mono, fmt } from 'telegraf/format';
+import { bold, fmt, code as mono, quote } from 'telegraf/format';
 import {
   OrderStatus,
   PaymentProvider,
@@ -21,7 +21,7 @@ import {
   OrderDomainError,
   type OrdersService,
 } from '../orders/orders.service.js';
-import type { VietqrApiClient } from '../payments/vietqr/vietqr-api.client.js';
+import type { SepayQrClient } from '../payments/sepay/sepay-qr.client.js';
 import type {
   CatalogProduct,
   CatalogProductDetails,
@@ -53,7 +53,6 @@ const vietnameseOrderStatuses: Record<OrderStatus, string> = {
   EXPIRED: 'HẾT HẠN',
   FAILED: 'THẤT BẠI',
 };
-const shopTitle = '🏷️ GeminiService Shop';
 const CHECKOUT_PROMPT_TTL_MS = 10 * 60_000;
 const fallbackInFlightCheckouts = new WeakMap<CatalogDependencies, Set<number>>();
 
@@ -75,7 +74,8 @@ export interface CatalogDependencies {
   productsService: ProductsService;
   usersService: UsersService;
   ordersService: OrdersService;
-  vietqrApiClient: VietqrApiClient;
+  sepayQrClient: SepayQrClient;
+  orderExpiresMinutes?: number;
   pendingCheckoutInputs: Map<number, PendingCheckoutState>;
   inFlightCheckouts?: Set<number>;
 }
@@ -92,8 +92,6 @@ function getInFlightCheckouts(deps: CatalogDependencies): Set<number> {
 
 const copy = {
   vi: {
-    heading: 'Chọn sản phẩm bạn muốn mua 👇',
-    hint: 'Bấm vào một sản phẩm để xem chi tiết.',
     empty: 'Hiện chưa có sản phẩm.',
     error: 'Chưa tải được sản phẩm. Hãy thử làm mới.',
     missing: 'Sản phẩm này hiện không khả dụng.',
@@ -104,6 +102,7 @@ const copy = {
     refresh: '🔄 Làm mới',
     back: '↩️ Quay lại',
     products: '↩️ Danh sách sản phẩm',
+    confirmBuy: '✅ Xác nhận',
     paymentUnavailable: '⚠️ Thanh toán QR hiện chưa sẵn sàng. Vui lòng thử lại sau hoặc liên hệ hỗ trợ.',
     invalidEmail: '❌ Email không hợp lệ. Vui lòng nhập lại đúng định dạng email (ví dụ: ten@gmail.com):',
     invalidRequiredText: '❌ Thông tin không được để trống. Vui lòng nhập lại:',
@@ -169,14 +168,12 @@ const copy = {
         `📝 Nội dung CK: ${params.content}`,
         `⏰ Hạn thanh toán: ${params.expiresAt}`,
         '',
-        'Vui lòng chuyển khoản đúng số tiền và nội dung để hệ thống tự động xác nhận.',
+        'Vui lòng chuyển khoản đúng số tiền và nội dung bên trên.',
       ]
         .filter((line): line is string => line !== null)
         .join('\n'),
   },
   en: {
-    heading: 'Choose a product 👇',
-    hint: 'Tap a product to view its details.',
     empty: 'No products are currently available.',
     error: 'Could not load products. Please refresh to try again.',
     missing: 'This product is currently unavailable.',
@@ -187,6 +184,7 @@ const copy = {
     refresh: '🔄 Refresh',
     back: '↩️ Back',
     products: '↩️ Product list',
+    confirmBuy: '✅ Confirm',
     paymentUnavailable: '⚠️ QR payment is currently unavailable. Please try again later or contact support.',
     invalidEmail: '❌ Invalid email address. Please enter a valid email (e.g. name@gmail.com):',
     invalidRequiredText: '❌ This field cannot be empty. Please enter a value:',
@@ -252,7 +250,7 @@ const copy = {
         `📝 Transfer Note: ${params.content}`,
         `⏰ Expires at: ${params.expiresAt}`,
         '',
-        'Please transfer the exact amount and note for automatic confirmation.',
+        'Please transfer the exact amount and note shown above.',
       ]
         .filter((line): line is string => line !== null)
         .join('\n'),
@@ -280,7 +278,7 @@ export async function showCatalogText(
 }
 
 function isPaymentConfigured(deps: CatalogDependencies): boolean {
-  return deps.vietqrApiClient.isConfigured();
+  return deps.sepayQrClient.isConfigured();
 }
 
 function buildFieldPromptMarkup(state: PendingCheckoutState, field: HandleFieldConfig) {
@@ -398,7 +396,8 @@ export async function createOrderAndSendQr(
         planId: plan.id,
         targetEmail,
         customerInput: normalizedInput,
-        paymentProvider: PaymentProvider.VIETQR,
+        paymentProvider: PaymentProvider.SEPAY,
+        expiresMinutes: deps.orderExpiresMinutes,
       });
     } catch (error) {
       await context.telegram.deleteMessage(statusMsg.chat.id, statusMsg.message_id).catch(() => undefined);
@@ -424,19 +423,18 @@ export async function createOrderAndSendQr(
     }
 
     try {
-      const qr = await deps.vietqrApiClient.generateCustomerQr({
+      const qr = await deps.sepayQrClient.generateCustomerQr({
         orderCode: order.orderCode,
         amount: order.totalAmount,
-        content: order.orderCode,
       });
 
       await deps.ordersService.attachVietqrPaymentDetails(order.id, {
-        paymentProvider: PaymentProvider.VIETQR,
+        paymentProvider: PaymentProvider.SEPAY,
         paymentContent: qr.content,
-        paymentQrCode: qr.qrCode,
+        paymentQrCode: null,
         paymentQrLink: qr.qrLink,
-        paymentVaAccount: qr.vaAccount,
-        paymentProviderRef: qr.transactionRefId,
+        paymentVaAccount: null,
+        paymentProviderRef: null,
       });
 
       const numberFormat = new Intl.NumberFormat(code === 'vi' ? 'vi-VN' : 'en-US');
@@ -455,7 +453,7 @@ export async function createOrderAndSendQr(
         amount: formattedPrice,
         currency: order.currency,
         bankCode: qr.bankName ? `${qr.bankCode} (${qr.bankName})` : qr.bankCode,
-        accountNumber: qr.vaAccount ?? qr.bankAccount,
+        accountNumber: qr.bankAccount,
         accountName: qr.userBankName,
         content: qr.content,
         expiresAt: `${expiresLabel} (GMT+7)`,
@@ -463,10 +461,7 @@ export async function createOrderAndSendQr(
       });
 
       const buttons = [
-        [
-          Markup.button.callback(labels.checkStatus, `order:${code}:status:${order.id}`),
-          Markup.button.callback(labels.cancelOrder, `order:${code}:cancel:${order.id}`),
-        ],
+        [Markup.button.callback(labels.cancelOrder, `order:${code}:cancel:${order.id}`)],
       ];
 
       await context.telegram.deleteMessage(statusMsg.chat.id, statusMsg.message_id).catch(() => undefined);
@@ -479,7 +474,7 @@ export async function createOrderAndSendQr(
       );
     } catch {
       await deps.ordersService
-        .cancelPendingOrder(order.id, user.id, 'VIETQR_QR_GENERATION_FAILED')
+        .cancelPendingOrder(order.id, user.id, 'SEPAY_QR_GENERATION_FAILED')
         .catch(() => undefined);
       await context.telegram.deleteMessage(statusMsg.chat.id, statusMsg.message_id).catch(() => undefined);
       await context.reply(labels.qrFailed);
@@ -598,6 +593,237 @@ ${bold(isEnglish ? '⌛ Time:' : '⌛ Thời gian:')} ${time}`;
   return lines.length > 0 ? fmt`${summary}\n\n${lines.join('\n')}` : summary;
 }
 
+interface ClassifiedProductPanel {
+  title: string;
+  middleVi?: ReturnType<typeof fmt> | string;
+  middleEn?: ReturnType<typeof fmt> | string;
+  noteVi: string;
+  noteEn: string;
+}
+
+const classifiedProductPanels: Record<string, ClassifiedProductPanel> = {
+  gpt: {
+    title: 'CHATGPT',
+    noteVi: 'Ưu tiên sản phẩm GGPAY vì siêu bền, các sản phẩm khác chống cháy',
+    noteEn: 'Prioritize GGPAY plans for high durability; other options are short-term backups.',
+  },
+  claude: {
+    title: 'CLAUDE',
+    noteVi: 'Ưu tiên sản phẩm GGPAY vì siêu bền, các sản phẩm khác chống cháy',
+    noteEn: 'Prioritize GGPAY plans for high durability; other options are short-term backups.',
+  },
+  capcut: {
+    title: 'CAPCUT',
+    noteVi: '🏪 Giao dịch tự động - Nhận hàng sau 5s!',
+    noteEn: '🏪 Automated delivery - Receive your order in 5s!',
+  },
+  gemini: {
+    title: 'GEMINI',
+    noteVi: '🏪 Giao dịch tự động - Nhận hàng sau 5s!',
+    noteEn: '🏪 Automated delivery - Receive your order in 5s!',
+  },
+  grok: {
+    title: 'GROK',
+    noteVi: '🏪 Giao dịch tự động - Nhận hàng sau 5s!',
+    noteEn: '🏪 Automated delivery - Receive your order in 5s!',
+  },
+  m365: {
+    title: 'M365',
+    noteVi: '🏪 Giao dịch tự động - Nhận hàng sau 5s!',
+    noteEn: '🏪 Automated delivery - Receive your order in 5s!',
+  },
+  youtube: {
+    title: 'YOUTUBE',
+    middleVi: 'GỬI MAIL SAU KHI MUA HÀNG LÀ DONE',
+    middleEn: 'SEND YOUR EMAIL AFTER PURCHASE AND YOU ARE DONE',
+    noteVi: '🏪 Giao dịch tự động - Nhận hàng sau 5s!',
+    noteEn: '🏪 Automated delivery - Receive your order in 5s!',
+  },
+};
+
+function buildClassifiedProductDetailMessage(
+  panel: ClassifiedProductPanel,
+  code: 'vi' | 'en',
+  hasPlans: boolean,
+) {
+  if (code === 'en') {
+    const footer = hasPlans ? 'Choose a product to buy:' : copy.en.noPlans;
+    const middle =
+      panel.middleEn
+      ?? fmt`${bold('🚛 Delivery format:')}
+${bold('• 👨‍💼 Pre-made account:')} Email | Pass | 2FA or other format
+${bold('• ⚙️ Service:')} Official personal upgrade.`;
+    return fmt`${bold(panel.title)}
+
+${bold('📊 Plan classification system:')}
+
+${bold('🚫 NW:')} No Warranty
+• Ultra-low price - No warranty.
+
+${bold('⏱ W(Number):')} Warranty Days or BH(Number)
+• Warranty for a specific number of days.
+${bold('• Example:')} W30 (30 days), W365 (1 year), BH1D,...
+
+${bold('🛡 FW:')} Full Warranty or BHF
+• FULL PLAN LIFETIME WARRANTY
+• ✨ Peace of mind until the very last second!
+
+──────────────────────────
+${middle}
+
+${panel.noteEn}
+
+${footer}`;
+  }
+
+  const footer = hasPlans ? 'Chọn sản phẩm để mua:' : copy.vi.noPlans;
+  const middle =
+    panel.middleVi
+    ?? fmt`${bold('🚛 Định dạng bàn giao:')}
+${bold('• 👨‍💼 TK cấp sẵn:')} Email | Pass | 2FA hoặc định dạng khác
+${bold('• ⚙️ Dịch vụ:')} Nâng cấp chính chủ.`;
+  return fmt`${bold(panel.title)}
+
+${bold('📊 Hệ thống phân loại gói cước:')}
+
+${bold('🚫 NW:')} No Warranty
+• Giá siêu rẻ - Không bảo hành.
+
+${bold('⏱ W(Số):')} Warranty Days hoặc BH(Số)
+• Bảo hành theo số ngày cụ thể.
+${bold('• Ví dụ:')} W30 (30 ngày), W365 (1 năm), BH1D,...
+
+${bold('🛡 FW:')} Full Warranty hoặc BHF
+• BẢO HÀNH TRỌN VÒNG ĐỜI GÓI
+• ✨ Yên tâm sử dụng đến giây cuối cùng!
+
+──────────────────────────
+${middle}
+
+${panel.noteVi}
+
+${footer}`;
+}
+
+export function buildProductDetailMessage(
+  product: CatalogProductDetails | null | undefined,
+  code: 'vi' | 'en',
+): { text: string; entities?: ReturnType<typeof fmt>['entities'] } {
+  const labels = copy[code];
+  if (product === null) return { text: labels.missing };
+  if (!product) return { text: labels.plansError };
+
+  const plans = product.plans ?? [];
+  const panel = classifiedProductPanels[product.slug];
+  if (panel) {
+    const formatted = buildClassifiedProductDetailMessage(panel, code, plans.length > 0);
+    return { text: formatted.text, entities: formatted.entities };
+  }
+
+  const description = code === 'vi' ? product.descriptionVi : product.descriptionEn;
+  const text = [
+    [product.name, description].filter(Boolean).join('\n\n').slice(0, 4000),
+    plans.length === 0 ? labels.noPlans : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  return { text };
+}
+
+function buildSupportBlock(
+  code: 'vi' | 'en',
+  envSource: NodeJS.ProcessEnv = process.env,
+) {
+  const telegramContact = envSource.SUPPORT_TELEGRAM?.trim();
+  const zaloContact = envSource.SUPPORT_ZALO?.trim();
+  if (!telegramContact && !zaloContact) return '';
+  return fmt`\n\n💡 ${bold(code === 'en' ? 'Contact support:' : 'Liên hệ hỗ trợ:')}${
+    telegramContact ? fmt`\n✉️ ${bold('Telegram:')} ${telegramContact}` : ''
+  }${zaloContact ? fmt`\n📞 ${bold('Zalo:')} ${zaloContact}` : ''}`;
+}
+
+export function buildCatalogMenuMessage(
+  code: 'vi' | 'en',
+  options: { hasProducts: boolean; isError: boolean; page: number; pageCount: number },
+  envSource: NodeJS.ProcessEnv = process.env,
+) {
+  const labels = copy[code];
+  const header = fmt`🛒 ${bold('GeminiService Shop — AUTO ORDER')} ⚡️${buildSupportBlock(code, envSource)}`;
+  if (options.isError) return fmt`${header}\n\n${labels.error}`;
+  if (!options.hasProducts) return fmt`${header}\n\n${labels.empty}`;
+
+  const pageSuffix = options.pageCount > 1 ? ` (${options.page + 1}/${options.pageCount})` : '';
+  if (code === 'en') {
+    return fmt`${header}
+
+🎁 ${bold('Promotions:')}
+Promotion details are listed inside each product when you open it.
+
+${bold('Choose a product to buy:')}${pageSuffix} ⤵`;
+  }
+
+  return fmt`${header}
+
+🎁 ${bold('Khuyến mãi:')}
+Chương trình khuyến mãi được ghi chi tiết ở mỗi sản phẩm khi bấm vào.
+
+${bold('Chọn sản phẩm bạn muốn mua:')}${pageSuffix} ⤵`;
+}
+
+export interface PlanConfirmationTarget {
+  nameVi: string;
+  nameEn: string;
+  descriptionVi: string | null;
+  descriptionEn: string | null;
+  price: bigint | string;
+  currency: string;
+  stockQuantity: number;
+}
+
+export function buildPlanConfirmationMessage(
+  plan: PlanConfirmationTarget,
+  code: 'vi' | 'en',
+  envSource: NodeJS.ProcessEnv = process.env,
+) {
+  const labels = copy[code];
+  const numberFormat = new Intl.NumberFormat(code === 'vi' ? 'vi-VN' : 'en-US');
+  const planName = code === 'en' ? plan.nameEn : plan.nameVi;
+  const rawDescription =
+    (code === 'en' ? plan.descriptionEn : plan.descriptionVi)?.trim()
+    || (code === 'en' ? plan.descriptionVi : plan.descriptionEn)?.trim()
+    || (code === 'en' ? 'No detailed description available.' : 'Chưa có mô tả chi tiết.');
+  const description = rawDescription.slice(0, 3200);
+  const priceText = `${numberFormat.format(BigInt(plan.price))} ${plan.currency}`;
+  const stockText =
+    plan.stockQuantity > 0
+      ? labels.inStock(numberFormat.format(plan.stockQuantity))
+      : labels.outOfStock;
+  const supportBlock = buildSupportBlock(code, envSource);
+  const warrantyQuote = quote`
+${description}
+`;
+
+  if (code === 'en') {
+    return fmt`📎 ${bold('Description & Warranty:')}
+${warrantyQuote}
+
+${bold(planName)}
+💵 ${bold('Price:')} ${bold(priceText)}
+📦 ${bold('Stock:')} ${stockText}${supportBlock}
+
+${bold('Confirm the details above to proceed with QR payment:')}`;
+  }
+
+  return fmt`📎 ${bold('Description & Warranty:')}
+${warrantyQuote}
+
+${bold(planName)}
+💵 ${bold('Giá:')} ${bold(priceText)}
+📦 ${bold('Tồn kho:')} ${stockText}${supportBlock}
+
+${bold('Xác nhận thông tin bên trên để tiến hành đặt hàng & tạo mã QR:')}`;
+}
+
 export function registerCatalog(
   bot: Telegraf,
   code: 'vi' | 'en',
@@ -609,6 +835,7 @@ export function registerCatalog(
   const pageAction = (page: number) => `catalog:${code}:page:${page}`;
   const orderPageAction = (page: number) => `order:${code}:page:${page}`;
   const productAction = (page: number | string, id: string) => `catalog:${code}:item:${page}:${id}`;
+  const planPreviewAction = (page: number | string, planId: string) => `catalog:${code}:plan:${page}:${planId}`;
   const buyPlanAction = (planId: string) => `catalog:${code}:buy:${planId}`;
   const backAction = `catalog:${code}:back`;
   const soldOutAction = `catalog:${code}:soldout`;
@@ -655,11 +882,15 @@ export function registerCatalog(
       Markup.button.callback(labels.back, backAction),
     ]);
 
-    const heading = pageCount > 1 ? `${labels.heading} (${page + 1}/${pageCount})` : labels.heading;
-    const body = !products ? labels.error : products.length === 0 ? labels.empty : `${heading}\n${labels.hint}`;
-    await showCatalogText(context, `${shopTitle}\n\n${body}`, {
+    const message = buildCatalogMenuMessage(code, {
+      hasProducts: Boolean(products && products.length > 0),
+      isError: !products,
+      page,
+      pageCount,
+    });
+    await showCatalogText(context, message.text, {
       ...Markup.inlineKeyboard(rows),
-      entities: [{ type: 'bold', offset: 0, length: shopTitle.length }],
+      entities: message.entities,
     });
   }
 
@@ -729,18 +960,8 @@ export function registerCatalog(
       product = undefined;
     }
 
-    const description = code === 'vi' ? product?.descriptionVi : product?.descriptionEn;
+    const detail = buildProductDetailMessage(product, code);
     const plans = product?.plans ?? [];
-    const text = product
-      ? [
-          [product.name, description].filter(Boolean).join('\n\n').slice(0, 4000),
-          plans.length === 0 ? labels.noPlans : undefined,
-        ]
-          .filter(Boolean)
-          .join('\n\n')
-      : product === null
-        ? labels.missing
-        : labels.plansError;
     const emoji = plans.length ? (await readProductEmojiMap()).get(id) : undefined;
     const rows = plans.map((plan) => {
       const name = code === 'vi' ? plan.nameVi : plan.nameEn;
@@ -751,7 +972,7 @@ export function registerCatalog(
         {
           ...Markup.button.callback(
             `${name} - ${price} ${plan.currency} (${stock})`,
-            hasStock ? buyPlanAction(plan.id) : soldOutAction,
+            planPreviewAction(page, plan.id),
           ),
           style: hasStock ? 'success' : 'danger',
           icon_custom_emoji_id: emoji?.image === product?.image ? emoji?.id : undefined,
@@ -761,15 +982,50 @@ export function registerCatalog(
 
     await showCatalogText(
       context,
-      text,
-      Markup.inlineKeyboard([
-        ...rows,
-        [
-          Markup.button.callback(labels.refresh, productAction(page, id)),
-          Markup.button.callback(labels.products, pageAction(Number(page))),
-        ],
-      ]),
+      detail.text,
+      {
+        ...Markup.inlineKeyboard([
+          ...rows,
+          [
+            Markup.button.callback(labels.refresh, productAction(page, id)),
+            Markup.button.callback(labels.products, pageAction(Number(page))),
+          ],
+        ]),
+        ...(detail.entities ? { entities: detail.entities } : {}),
+      },
     );
+  });
+
+  bot.action(new RegExp(`^catalog:${code}:plan:([0-9]{1,6}):(${UUID_PATTERN})$`), async (context) => {
+    clearPendingInput(context);
+    await context.answerCbQuery();
+    const [, page, planId] = context.match;
+    const plan = await deps.productsService.getActivePlanById(planId);
+    if (!plan) {
+      await context.reply(labels.planUnavailable);
+      return;
+    }
+
+    const message = buildPlanConfirmationMessage(plan, code);
+    const hasStock = plan.stockQuantity > 0;
+    const primaryButton = hasStock
+      ? {
+          ...Markup.button.callback(labels.confirmBuy, buyPlanAction(plan.id)),
+          style: 'success' as const,
+        }
+      : {
+          ...Markup.button.callback(labels.outOfStock, soldOutAction),
+          style: 'danger' as const,
+        };
+
+    await showCatalogText(context, message.text, {
+      ...Markup.inlineKeyboard([
+        [primaryButton],
+        [Markup.button.callback(labels.back, productAction(page, plan.productId))],
+      ]),
+      entities: message.entities,
+      link_preview_options: { is_disabled: true },
+    });
   });
 
   bot.action(new RegExp(`^catalog:${code}:buy:(${UUID_PATTERN})$`), async (context) => {

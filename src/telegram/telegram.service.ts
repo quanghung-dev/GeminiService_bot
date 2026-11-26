@@ -1,9 +1,10 @@
-import { Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
 import { Markup, Telegraf, TelegramError } from 'telegraf';
+import { type SepayQrConfig, sepayQrConfig } from '../config/sepay-qr.config.js';
 import { TelegramOutboxService } from '../notifications/telegram-outbox.service.js';
 import type { TelegramSendResult } from '../notifications/telegram-sender.interface.js';
 import { OrdersService } from '../orders/orders.service.js';
-import { VietqrApiClient } from '../payments/vietqr/vietqr-api.client.js';
+import { SepayQrClient } from '../payments/sepay/sepay-qr.client.js';
 import { ProductsService } from '../products/products.service.js';
 import { UsersService } from '../users/users.service.js';
 import {
@@ -36,10 +37,12 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
   private bot?: Telegraf;
 
   constructor(
+    @Inject(sepayQrConfig.KEY)
+    private readonly sepayConfig: SepayQrConfig,
     private readonly productsService: ProductsService,
     private readonly usersService: UsersService,
     private readonly ordersService: OrdersService,
-    private readonly vietqrApiClient: VietqrApiClient,
+    private readonly sepayQrClient: SepayQrClient,
     private readonly outboxService: TelegramOutboxService,
   ) {}
 
@@ -53,7 +56,8 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
       productsService: this.productsService,
       usersService: this.usersService,
       ordersService: this.ordersService,
-      vietqrApiClient: this.vietqrApiClient,
+      sepayQrClient: this.sepayQrClient,
+      orderExpiresMinutes: this.sepayConfig.orderExpiresMinutes,
       pendingCheckoutInputs: this.pendingCheckoutInputs,
       inFlightCheckouts: this.inFlightCheckouts,
     };

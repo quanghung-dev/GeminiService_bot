@@ -19,7 +19,7 @@ import {
 } from '../src/telegram/telegram-catalog.js';
 
 describe('Checkout Failure Rollback & Checkout Guardrails', () => {
-  it('cancels order and releases stock when VietQR QR generation fails', async () => {
+  it('cancels order and releases stock when SePay QR generation fails', async () => {
     const replies: string[] = [];
     const cancelledCalls: Array<{ orderId: string; userId?: string; reason?: string }> = [];
 
@@ -48,7 +48,7 @@ describe('Checkout Failure Rollback & Checkout Guardrails', () => {
           orderCode: 'GS1234567890',
           totalAmount: 100_000n,
           currency: 'VND',
-          expiresAt: new Date(Date.now() + 30 * 60_000),
+          expiresAt: new Date(Date.now() + 10 * 60_000),
           targetEmail: null,
         }),
         cancelPendingOrder: async (orderId: string, userId?: string, reason?: string) => {
@@ -59,12 +59,13 @@ describe('Checkout Failure Rollback & Checkout Guardrails', () => {
           throw new Error('Should not be reached when QR fails');
         },
       } as unknown as CatalogDependencies['ordersService'],
-      vietqrApiClient: {
+      sepayQrClient: {
         isConfigured: () => true,
         generateCustomerQr: async () => {
-          throw new Error('Simulated VietQR upstream timeout');
+          throw new Error('Simulated SePay upstream timeout');
         },
-      } as unknown as CatalogDependencies['vietqrApiClient'],
+      } as unknown as CatalogDependencies['sepayQrClient'],
+      orderExpiresMinutes: 10,
       pendingCheckoutInputs: new Map<number, PendingCheckoutState>(),
       inFlightCheckouts: new Set<number>(),
     };
@@ -87,14 +88,15 @@ describe('Checkout Failure Rollback & Checkout Guardrails', () => {
     assert.deepEqual(cancelledCalls[0], {
       orderId: 'order-1',
       userId: 'user-1',
-      reason: 'VIETQR_QR_GENERATION_FAILED',
+      reason: 'SEPAY_QR_GENERATION_FAILED',
     });
     assert.ok(replies.some((msg) => msg.includes('Không thể tạo mã QR')));
   });
 
-  it('rejects invalid email and supports multi-step CUSTOMER_ACCOUNT checkout before VietQR generation', async () => {
+  it('rejects invalid email and supports multi-step CUSTOMER_ACCOUNT checkout before SePay QR generation', async () => {
     const replies: string[] = [];
     const createOrderCalls: Array<Record<string, unknown>> = [];
+    const attachedCalls: Array<Record<string, unknown>> = [];
     const photoPayloads: Array<{ caption: string; keyboard: unknown[][] }> = [];
     const pending = new Map<number, PendingCheckoutState>([
       [
@@ -145,29 +147,30 @@ describe('Checkout Failure Rollback & Checkout Guardrails', () => {
             orderCode: 'GSACC12345',
             totalAmount: 120_000n,
             currency: 'VND',
-            expiresAt: new Date(Date.now() + 30 * 60_000),
+            expiresAt: new Date(Date.now() + 10 * 60_000),
             targetEmail: 'bob@example.com',
           };
         },
-        attachVietqrPaymentDetails: async () => ({}),
+        attachVietqrPaymentDetails: async (_orderId: string, details: Record<string, unknown>) => {
+          attachedCalls.push(details);
+          return {};
+        },
       } as unknown as CatalogDependencies['ordersService'],
-      vietqrApiClient: {
+      sepayQrClient: {
         isConfigured: () => true,
         generateCustomerQr: async () => ({
-          bankCode: 'MB',
-          bankName: 'MB Bank',
-          bankAccount: '0123456789',
-          userBankName: 'TEST SHOP',
-          vaAccount: 'VQR123456',
+          bankCode: 'Vietcombank',
+          bankName: null,
+          bankAccount: '9869983819',
+          userBankName: 'DO QUANG HUNG',
           amount: '120000',
           content: 'GSACC12345',
           orderId: 'GSACC12345',
-          qrCode: '000201...',
-          qrLink: 'https://dev.vietqr.org/qr?test=1',
-          transactionRefId: 'ref-1',
+          qrLink: 'https://qr.sepay.vn/img?acc=9869983819&bank=Vietcombank&amount=120000&des=GSACC12345&template=compact',
           qrImagePng: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
         }),
-      } as unknown as CatalogDependencies['vietqrApiClient'],
+      } as unknown as CatalogDependencies['sepayQrClient'],
+      orderExpiresMinutes: 10,
       pendingCheckoutInputs: pending,
       inFlightCheckouts: new Set<number>(),
     };
@@ -222,22 +225,35 @@ describe('Checkout Failure Rollback & Checkout Guardrails', () => {
     assert.equal(pending.get(77)?.currentIndex, 2);
     assert.ok(replies[3]?.includes('(3/3)'));
 
-    // 5. Entering 2FA completes collection and creates VietQR order + QR
+    // 5. Entering 2FA completes collection and creates SePay order + QR
     const handled5 = await handlePendingCheckoutText(fakeContext, deps, 'BACKUP-CODE-123');
     assert.equal(handled5, true);
     assert.equal(pending.has(77), false);
     assert.equal(createOrderCalls.length, 1);
-    assert.equal(createOrderCalls[0]?.paymentProvider, PaymentProvider.VIETQR);
+    assert.equal(createOrderCalls[0]?.paymentProvider, PaymentProvider.SEPAY);
+    assert.equal(createOrderCalls[0]?.expiresMinutes, 10);
     assert.deepEqual(createOrderCalls[0]?.customerInput, {
       usernameOrEmail: 'bob@example.com',
       password: 'SecretPass!99',
       twoFactor: 'BACKUP-CODE-123',
     });
+    assert.equal(attachedCalls[0]?.paymentProvider, PaymentProvider.SEPAY);
+    assert.equal(attachedCalls[0]?.paymentContent, 'GSACC12345');
     assert.equal(photoPayloads.length, 1);
     assert.ok(photoPayloads[0]?.caption.includes('bob@example.com'));
+    assert.ok(photoPayloads[0]?.caption.includes('9869983819'));
+    assert.ok(photoPayloads[0]?.caption.includes('DO QUANG HUNG'));
+    assert.ok(photoPayloads[0]?.caption.includes('GSACC12345'));
+    assert.ok(photoPayloads[0]?.caption.includes('shown above'));
+    assert.equal(photoPayloads[0]?.caption.includes('automatic confirmation'), false);
     assert.equal(photoPayloads[0]?.caption.includes('SecretPass!99'), false);
     assert.equal(photoPayloads[0]?.caption.includes('BACKUP-CODE-123'), false);
-    assert.equal(photoPayloads[0]?.keyboard[0]?.length, 2);
+    assert.equal(photoPayloads[0]?.keyboard.length, 1);
+    assert.equal(photoPayloads[0]?.keyboard[0]?.length, 1);
+    assert.equal(
+      (photoPayloads[0]?.keyboard[0]?.[0] as { callback_data?: string }).callback_data,
+      'order:en:cancel:order-acc-1',
+    );
   });
 
   it('enforces private chat, double-tap lock, strict UUIDs, and session/step-matched Skip & navigation cleanup', async () => {
@@ -297,23 +313,20 @@ describe('Checkout Failure Rollback & Checkout Guardrails', () => {
         },
         attachVietqrPaymentDetails: async () => ({}),
       } as unknown as CatalogDependencies['ordersService'],
-      vietqrApiClient: {
+      sepayQrClient: {
         isConfigured: () => true,
         generateCustomerQr: async () => ({
-          bankCode: 'MB',
+          bankCode: 'Vietcombank',
           bankName: null,
-          bankAccount: '0123456789',
-          userBankName: 'TEST',
-          vaAccount: null,
+          bankAccount: '9869983819',
+          userBankName: 'DO QUANG HUNG',
           amount: '100000',
           content: 'GSLOCK123456',
           orderId: 'GSLOCK123456',
-          qrCode: '000201',
-          qrLink: null,
-          transactionRefId: null,
+          qrLink: 'https://qr.sepay.vn/img?acc=9869983819&bank=Vietcombank&amount=100000&des=GSLOCK123456&template=compact',
           qrImagePng: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
         }),
-      } as unknown as CatalogDependencies['vietqrApiClient'],
+      } as unknown as CatalogDependencies['sepayQrClient'],
       pendingCheckoutInputs: pending,
       inFlightCheckouts: inFlight,
     };
