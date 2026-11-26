@@ -14,7 +14,6 @@ src/generated/prisma/
 .env.local
 .env.*.local
 !.env.example
-.telegram-product-emojis.json
 .telegram-product-emojis.json.*.tmp
 
 # Logs & runtime files

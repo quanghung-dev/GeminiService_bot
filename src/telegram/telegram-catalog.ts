@@ -29,6 +29,7 @@ import type {
 } from '../products/products.service.js';
 import type { UsersService } from '../users/users.service.js';
 import { readProductEmojiMap } from './product-emoji-map.js';
+import { resolveSupportContacts } from './telegram-menu.js';
 
 const productsPerPage = 15;
 const ordersPerPage = 10;
@@ -99,7 +100,6 @@ const copy = {
     plansError: 'Chưa tải được các gói. Hãy thử làm mới.',
     inStock: (quantity: string) => `còn ${quantity}`,
     outOfStock: 'hết hàng',
-    refresh: '🔄 Làm mới',
     back: '↩️ Quay lại',
     products: '↩️ Danh sách sản phẩm',
     confirmBuy: '✅ Xác nhận',
@@ -181,7 +181,6 @@ const copy = {
     plansError: 'Could not load plans. Please refresh to try again.',
     inStock: (quantity: string) => `${quantity} left`,
     outOfStock: 'out of stock',
-    refresh: '🔄 Refresh',
     back: '↩️ Back',
     products: '↩️ Product list',
     confirmBuy: '✅ Confirm',
@@ -734,12 +733,11 @@ function buildSupportBlock(
   code: 'vi' | 'en',
   envSource: NodeJS.ProcessEnv = process.env,
 ) {
-  const telegramContact = envSource.SUPPORT_TELEGRAM?.trim();
-  const zaloContact = envSource.SUPPORT_ZALO?.trim();
-  if (!telegramContact && !zaloContact) return '';
+  const { zalo, telegram } = resolveSupportContacts(envSource);
+  if (!zalo && !telegram) return '';
   return fmt`\n\n💡 ${bold(code === 'en' ? 'Contact support:' : 'Liên hệ hỗ trợ:')}${
-    telegramContact ? fmt`\n✉️ ${bold('Telegram:')} ${telegramContact}` : ''
-  }${zaloContact ? fmt`\n📞 ${bold('Zalo:')} ${zaloContact}` : ''}`;
+    zalo ? fmt`\n📞 ${bold('Zalo:')} ${zalo}` : ''
+  }${telegram ? fmt`\n✉️ ${bold('Tele:')} ${telegram}` : ''}`;
 }
 
 export function buildCatalogMenuMessage(
@@ -877,10 +875,7 @@ export function registerCatalog(
       if (page + 1 < pageCount) navigation.push(Markup.button.callback('▶️', pageAction(page + 1)));
       rows.push(navigation);
     }
-    rows.push([
-      Markup.button.callback(labels.refresh, pageAction(page)),
-      Markup.button.callback(labels.back, backAction),
-    ]);
+    rows.push([Markup.button.callback(labels.back, backAction)]);
 
     const message = buildCatalogMenuMessage(code, {
       hasProducts: Boolean(products && products.length > 0),
@@ -986,10 +981,7 @@ export function registerCatalog(
       {
         ...Markup.inlineKeyboard([
           ...rows,
-          [
-            Markup.button.callback(labels.refresh, productAction(page, id)),
-            Markup.button.callback(labels.products, pageAction(Number(page))),
-          ],
+          [Markup.button.callback(labels.products, pageAction(Number(page)))],
         ]),
         ...(detail.entities ? { entities: detail.entities } : {}),
       },

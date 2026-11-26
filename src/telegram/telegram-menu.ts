@@ -1,3 +1,23 @@
+export const DEFAULT_SUPPORT_ZALO = '0869983819';
+export const DEFAULT_SUPPORT_TELEGRAM = '@quanghungshop';
+
+export function resolveSupportContacts(envSource: NodeJS.ProcessEnv = process.env): {
+  zalo: string | undefined;
+  telegram: string | undefined;
+} {
+  const zalo =
+    envSource.SUPPORT_ZALO !== undefined ? envSource.SUPPORT_ZALO.trim() : DEFAULT_SUPPORT_ZALO;
+  const telegram =
+    envSource.SUPPORT_TELEGRAM !== undefined
+      ? envSource.SUPPORT_TELEGRAM.trim()
+      : DEFAULT_SUPPORT_TELEGRAM;
+
+  return {
+    zalo: zalo || undefined,
+    telegram: telegram || undefined,
+  };
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -11,11 +31,10 @@ export function buildSupportMessage(
   code: 'vi' | 'en',
   envSource: NodeJS.ProcessEnv = process.env,
 ): string {
-  const telegramContact = envSource.SUPPORT_TELEGRAM?.trim();
-  const zaloContact = envSource.SUPPORT_ZALO?.trim();
+  const { zalo, telegram } = resolveSupportContacts(envSource);
   const contactLines = [
-    telegramContact ? `✉️ <b>Telegram:</b> ${escapeHtml(telegramContact)}` : null,
-    zaloContact ? `📞 <b>Zalo:</b> ${escapeHtml(zaloContact)}` : null,
+    zalo ? `📞 <b>Zalo:</b> ${escapeHtml(zalo)}` : null,
+    telegram ? `✉️ <b>Tele:</b> ${escapeHtml(telegram)}` : null,
   ].filter((line): line is string => line !== null);
 
   if (code === 'en') {
@@ -92,9 +111,8 @@ export const menuRows = [
     { id: 'profile', vi: '💵 Hồ sơ', en: '💵 Profile' },
     { id: 'orders', vi: '📊 Lịch sử mua', en: '📊 Purchase history' },
   ],
-  [{ id: 'warranty', vi: '🛡️ Bảo hành', en: '🛡️ Warranty' }],
   [
-    { id: 'notifications', vi: '🔔 Quản lý thông báo', en: '🔔 Manage notifications' },
+    { id: 'warranty', vi: '🛡️ Bảo hành', en: '🛡️ Warranty' },
     { id: 'support', vi: '💬 Hỗ trợ', en: '💬 Support' },
   ],
   [

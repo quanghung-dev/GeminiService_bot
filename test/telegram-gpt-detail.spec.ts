@@ -179,7 +179,10 @@ describe('Plan Confirmation Screen before QR generation', () => {
       stockQuantity: 10,
     };
 
-    const withoutSupport = buildPlanConfirmationMessage(samplePlan, 'vi', {});
+    const withoutSupport = buildPlanConfirmationMessage(samplePlan, 'vi', {
+      SUPPORT_TELEGRAM: '',
+      SUPPORT_ZALO: '',
+    });
     assert.equal(withoutSupport.text.includes('Liên hệ hỗ trợ:'), false);
     assert.ok(withoutSupport.entities?.some((e) => e.type === 'blockquote'));
     assert.ok(withoutSupport.text.includes('SLOT GPT TEAM 1M BHF'));
@@ -187,6 +190,10 @@ describe('Plan Confirmation Screen before QR generation', () => {
     assert.ok(withoutSupport.text.includes('còn 10'));
     assert.ok(withoutSupport.text.includes('https://t.me/lehaipreshopnoti/529'));
     assert.ok(withoutSupport.text.endsWith('Xác nhận thông tin bên trên để tiến hành đặt hàng & tạo mã QR:'));
+
+    const withDefaultSupport = buildPlanConfirmationMessage(samplePlan, 'vi', {});
+    assert.ok(withDefaultSupport.text.includes('📞 Zalo: 0869983819'));
+    assert.ok(withDefaultSupport.text.includes('✉️ Tele: @quanghungshop'));
 
     const withSupport = buildPlanConfirmationMessage(samplePlan, 'en', {
       SUPPORT_TELEGRAM: '@myshop',
@@ -197,8 +204,8 @@ describe('Plan Confirmation Screen before QR generation', () => {
     assert.ok(withSupport.text.includes('280,000 VND'));
     assert.ok(withSupport.text.includes('10 left'));
     assert.ok(withSupport.text.includes('💡 Contact support:'));
-    assert.ok(withSupport.text.includes('✉️ Telegram: @myshop'));
     assert.ok(withSupport.text.includes('📞 Zalo: 0909123456'));
+    assert.ok(withSupport.text.includes('✉️ Tele: @myshop'));
   });
 
   it('routes plan click to confirmation screen before buy/QR action', async () => {
@@ -278,9 +285,15 @@ describe('Plan Confirmation Screen before QR generation', () => {
     assert.ok(itemRoute);
     await itemRoute.handler(fakeContext(itemRoute.match));
 
-    const itemKeyboard = (edited[0]?.extra?.reply_markup as { inline_keyboard: Array<Array<{ callback_data?: string }>> })
+    const itemKeyboard = (edited[0]?.extra?.reply_markup as { inline_keyboard: Array<Array<{ text?: string; callback_data?: string }>> })
       .inline_keyboard;
     assert.equal(itemKeyboard[0]?.[0]?.callback_data, `catalog:vi:plan:0:${planId}`);
+    assert.equal(itemKeyboard[1]?.length, 1);
+    assert.equal(itemKeyboard[1]?.[0]?.callback_data, 'catalog:vi:page:0');
+    assert.equal(
+      itemKeyboard.flat().some((btn) => btn.text?.includes('Làm mới')),
+      false,
+    );
 
     const planRoute = findAction(`catalog:vi:plan:0:${planId}`);
     assert.ok(planRoute);
@@ -313,14 +326,15 @@ describe('Buy Catalog Menu Header', () => {
     assert.deepEqual(boldTexts, [
       'GeminiService Shop — AUTO ORDER',
       'Liên hệ hỗ trợ:',
-      'Telegram:',
       'Zalo:',
+      'Tele:',
       'Khuyến mãi:',
       'Chọn sản phẩm bạn muốn mua:',
     ]);
     assert.ok(msg.text.includes('🛒 GeminiService Shop — AUTO ORDER ⚡️'));
-    assert.ok(msg.text.includes('✉️ Telegram: @geminishop'));
+    assert.ok(msg.text.includes('📞 Zalo: 0869983819') === false);
     assert.ok(msg.text.includes('📞 Zalo: 0912345678'));
+    assert.ok(msg.text.includes('✉️ Tele: @geminishop'));
     assert.ok(msg.text.endsWith('Chọn sản phẩm bạn muốn mua: ⤵'));
   });
 
@@ -373,5 +387,11 @@ describe('Buy Catalog Menu Header', () => {
       .inline_keyboard;
     assert.equal(keyboard[0]?.[0]?.text, 'GPT');
     assert.equal(keyboard[0]?.[0]?.callback_data, `catalog:vi:item:0:${prodId}`);
+    assert.equal(keyboard[1]?.length, 1);
+    assert.equal(keyboard[1]?.[0]?.callback_data, 'catalog:vi:back');
+    assert.equal(
+      keyboard.flat().some((btn) => btn.text?.includes('Làm mới')),
+      false,
+    );
   });
 });

@@ -1,0 +1,65 @@
+[
+  [
+    "b0917e50-2589-4e7d-b75f-216402cc422f",
+    {
+      "image": "https://unpkg.com/@lobehub/icons-static-png@2.12.0/light/openai.png",
+      "id": "6071186978727011202"
+    }
+  ],
+  [
+    "53b435c0-f26a-45fa-941d-73033f0c9c67",
+    {
+      "image": "https://unpkg.com/@lobehub/icons-static-png@2.12.0/light/gemini-color.png",
+      "id": "6070924667894375360"
+    }
+  ],
+  [
+    "2f1bc96e-d25e-41f6-b46f-c556ddfe4356",
+    {
+      "image": "https://unpkg.com/@lobehub/icons-static-png@2.12.0/light/claude-color.png",
+      "id": "6071302191224728703"
+    }
+  ],
+  [
+    "1b482893-6b9f-46c6-b83f-2a7fbc1ef731",
+    {
+      "image": "https://unpkg.com/@lobehub/icons-static-png@2.12.0/light/grok.png",
+      "id": "6071220307673228674"
+    }
+  ],
+  [
+    "d573641e-acd3-4306-8e3d-70ee1491b6b0",
+    {
+      "image": "https://unpkg.com/@lobehub/icons-static-png@2.12.0/light/capcut.png",
+      "id": "6073416642279253143"
+    }
+  ],
+  [
+    "a56e444d-fa54-4a88-a50d-1b9d4ae12b97",
+    {
+      "image": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/microsoft-365.png",
+      "id": "6070961931030636594"
+    }
+  ],
+  [
+    "4921197d-299f-4869-85b3-de2dee5a9cb9",
+    {
+      "image": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/notion.png",
+      "id": "6071078882990106189"
+    }
+  ],
+  [
+    "976f1186-1822-40fd-914b-4ec1a5c7752d",
+    {
+      "image": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/terminal.png",
+      "id": "6071326285991257750"
+    }
+  ],
+  [
+    "d32a40ec-d2e7-4b15-a8a2-ad9d565c8877",
+    {
+      "image": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/youtube.png",
+      "id": "6071165435171054755"
+    }
+  ]
+]
