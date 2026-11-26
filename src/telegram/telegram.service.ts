@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
+import https from 'node:https';
 import { Markup, Telegraf, TelegramError } from 'telegraf';
 import { type SepayQrConfig, sepayQrConfig } from '../config/sepay-qr.config.js';
 import { TelegramOutboxService } from '../notifications/telegram-outbox.service.js';
@@ -19,6 +20,7 @@ import { buildProfileMessage } from './telegram-profile.js';
 import { registerWarranty } from './telegram-warranty.js';
 
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+const TELEGRAM_CONNECT_RETRY_MS = 15_000;
 
 export function truncateTelegramMessage(
   text: string,
@@ -29,12 +31,38 @@ export function truncateTelegramMessage(
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+export function formatTelegramErrorMessage(message: string, error: unknown): string {
+  if (error instanceof TelegramError) {
+    return `${message} (mã ${error.code}: ${error.description})`;
+  }
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const nested =
+      error instanceof AggregateError && error.errors.length > 0
+        ? error.errors
+            .map((entry) =>
+              entry instanceof Error
+                ? `${(entry as NodeJS.ErrnoException).code ?? entry.name}: ${entry.message}`
+                : String(entry),
+            )
+            .join('; ')
+        : '';
+    const safeMsg = error.message.replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot<redacted>');
+    const detail = [code, safeMsg, nested].filter(Boolean).join(' - ');
+    return detail ? `${message} (${detail})` : message;
+  }
+  return message;
+}
+
 @Injectable()
 export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(TelegramService.name);
   private readonly pendingCheckoutInputs = new Map<number, PendingCheckoutState>();
   private readonly inFlightCheckouts = new Set<number>();
   private bot?: Telegraf;
+  private telegramAgent?: https.Agent;
+  private retryTimer: NodeJS.Timeout | null = null;
+  private destroyed = false;
 
   constructor(
     @Inject(sepayQrConfig.KEY)
@@ -51,7 +79,15 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
     const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
     if (!token) return;
 
-    const bot = new Telegraf(token);
+    this.destroyed = false;
+    this.telegramAgent = new https.Agent({
+      keepAlive: true,
+      keepAliveMsecs: 10_000,
+      family: 4,
+    });
+    const bot = new Telegraf(token, {
+      telegram: { agent: this.telegramAgent },
+    });
     const catalogDeps: CatalogDependencies = {
       productsService: this.productsService,
       usersService: this.usersService,
@@ -148,6 +184,12 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
       this.logger.error(this.describeError('Không xử lý được tin nhắn Telegram', error));
     });
 
+    this.bot = bot;
+    await this.connectAndLaunch(bot);
+  }
+
+  private async connectAndLaunch(bot: Telegraf): Promise<void> {
+    if (this.destroyed) return;
     try {
       if ((await bot.telegram.getWebhookInfo()).url) {
         this.logger.error('Bot đang có webhook. Polling chưa được bật.');
@@ -156,10 +198,19 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
       bot.botInfo = await bot.telegram.getMe();
     } catch (error) {
       this.logger.error(this.describeError('Không kết nối được Telegram', error));
+      const isPermanentConfigError =
+        error instanceof TelegramError && (error.code === 401 || error.code === 404);
+      if (!isPermanentConfigError && !this.destroyed) {
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          void this.connectAndLaunch(bot);
+        }, TELEGRAM_CONNECT_RETRY_MS);
+        this.retryTimer.unref();
+      }
       return;
     }
 
-    this.bot = bot;
+    if (this.destroyed) return;
     this.outboxService.registerSender({
       sendMessage: (chatId, text) => this.sendOutboxMessage(bot, chatId, text),
     });
@@ -171,6 +222,11 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
   }
 
   onModuleDestroy(): void {
+    this.destroyed = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     this.outboxService.registerSender(null);
     this.pendingCheckoutInputs.clear();
     this.inFlightCheckouts.clear();
@@ -178,6 +234,9 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
       this.bot?.stop('NestJS shutdown');
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'Bot is not running!') throw error;
+    } finally {
+      this.telegramAgent?.destroy();
+      this.telegramAgent = undefined;
     }
   }
 
@@ -217,6 +276,6 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
   }
 
   private describeError(message: string, error: unknown): string {
-    return error instanceof TelegramError ? `${message} (mã ${error.code})` : message;
+    return formatTelegramErrorMessage(message, error);
   }
 }

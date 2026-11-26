@@ -2,7 +2,10 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildSupportMessage } from '../src/telegram/telegram-menu.js';
-import { truncateTelegramMessage } from '../src/telegram/telegram.service.js';
+import {
+  formatTelegramErrorMessage,
+  truncateTelegramMessage,
+} from '../src/telegram/telegram.service.js';
 
 describe('Support Menu & Telegram Message Truncation', () => {
   it('omits unconfigured contact lines and HTML-escapes configured contacts', () => {
@@ -28,5 +31,16 @@ describe('Support Menu & Telegram Message Truncation', () => {
     const truncated = truncateTelegramMessage(over);
     assert.equal(truncated.length, 4096);
     assert.ok(truncated.endsWith('...'));
+  });
+
+  it('formats network and aggregate Telegram errors without leaking bot tokens', () => {
+    const agg = new AggregateError(
+      [Object.assign(new Error('connect ENETUNREACH 2001:67c:4e8:f004::9:443'), { code: 'ENETUNREACH' })],
+      'request to https://api.telegram.org/bot123456:ABC_secret/getMe failed',
+    );
+    const formatted = formatTelegramErrorMessage('Không kết nối được Telegram', agg);
+    assert.equal(formatted.includes('123456:ABC_secret'), false);
+    assert.ok(formatted.includes('bot<redacted>'));
+    assert.ok(formatted.includes('ENETUNREACH'));
   });
 });
